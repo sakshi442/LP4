@@ -1,0 +1,168 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import tensorflow as tf
+from tensorflow.keras import layers, Model
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, precision_score, recall_score
+
+print("Libraries imported successfully!")
+
+
+url = "https://storage.googleapis.com/download.tensorflow.org/data/ecg.csv"
+df = pd.read_csv(url, header=None)
+
+data = df.iloc[:, :-1].values
+labels = df.iloc[:, -1].values
+
+print("\nDataset Shape:", df.shape)
+print("Feature Shape:", data.shape)
+print("Labels:", np.unique(labels))
+
+
+x_train, x_test, y_train, y_test = train_test_split(
+    data, labels, test_size=0.2, random_state=21
+)
+
+# Normalize the Data
+minimum = x_train.min()
+maximum = x_train.max()
+
+x_train = ((x_train - minimum) / (maximum - minimum)).astype("float32")
+x_test = ((x_test - minimum) / (maximum - minimum)).astype("float32")
+
+# Use only normal samples for training
+normal_train = x_train[y_train == 1]
+normal_test = x_test[y_test == 1]
+
+print("\nNormal Training Samples:", normal_train.shape)
+
+
+encoder = tf.keras.Sequential([
+    layers.Input(shape=(140,)),
+    layers.Dense(32, activation="relu"),
+    layers.Dense(16, activation="relu"),
+    layers.Dense(8, activation="relu")
+], name="Encoder")
+
+
+decoder = tf.keras.Sequential([
+    layers.Input(shape=(8,)),
+    layers.Dense(16, activation="relu"),
+    layers.Dense(32, activation="relu"),
+    layers.Dense(140, activation="sigmoid")
+], name="Decoder")
+
+
+inputs = layers.Input(shape=(140,))
+encoded = encoder(inputs)
+decoded = decoder(encoded)
+
+autoencoder = Model(inputs, decoded, name="Autoencoder")
+
+
+autoencoder.compile(
+    optimizer="adam",
+    loss="mse",
+    metrics=["mae"]
+)
+
+print("\nAutoencoder Model Summary:")
+autoencoder.summary()
+
+# Train the Autoencoder on Normal Data
+print("\nTraining the Autoencoder...")
+
+history = autoencoder.fit(
+    normal_train,
+    normal_train,
+    epochs=20,
+    batch_size=128,
+    validation_data=(normal_test, normal_test),
+    shuffle=True,
+    verbose=1
+)
+
+print("\nTraining Completed Successfully!")
+
+# Plot Training and Validation Loss
+plt.figure(figsize=(8, 4))
+plt.plot(history.history["loss"], label="Training Loss")
+plt.plot(history.history["val_loss"], label="Validation Loss")
+plt.xlabel("Epoch")
+plt.ylabel("Mean Squared Error")
+plt.title("Autoencoder Training Loss")
+plt.legend()
+plt.grid(True)
+plt.show()
+
+
+train_reconstructed = autoencoder.predict(normal_train, verbose=0)
+
+train_errors = np.mean(
+    np.abs(normal_train - train_reconstructed), axis=1
+)
+
+
+threshold = np.mean(train_errors) + np.std(train_errors)
+
+print("\nAnomaly Threshold:", round(float(threshold), 6))
+
+
+test_reconstructed = autoencoder.predict(x_test, verbose=0)
+
+test_errors = np.mean(
+    np.abs(x_test - test_reconstructed), axis=1
+)
+
+# 1 = Anomaly, 0 = Normal
+predictions = (test_errors > threshold).astype(int)
+
+
+actual_anomalies = (y_test == 0).astype(int)
+
+accuracy = accuracy_score(actual_anomalies, predictions)
+
+precision = precision_score(
+    actual_anomalies, predictions, zero_division=0
+)
+
+recall = recall_score(
+    actual_anomalies, predictions, zero_division=0
+)
+
+print("\n--- Anomaly Detection Results ---")
+print("Accuracy :", round(accuracy * 100, 2), "%")
+print("Precision:", round(precision * 100, 2), "%")
+print("Recall :", round(recall * 100, 2), "%")
+
+print("\nFirst 10 Predictions (1 = Anomaly, 0 = Normal):")
+print(predictions[:10])
+
+# Visualize Original and Reconstructed Signals
+plt.figure(figsize=(10, 4))
+plt.plot(x_test[0], label="Original Input")
+plt.plot(test_reconstructed[0], label="Reconstructed Output")
+plt.title("Original vs Reconstructed Signal")
+plt.xlabel("Feature Index")
+plt.ylabel("Normalized Value")
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# Plot Reconstruction Error Distribution
+plt.figure(figsize=(8, 4))
+plt.hist(test_errors, bins=40)
+
+plt.axvline(
+    threshold, linestyle="--", label="Anomaly Threshold"
+)
+
+plt.xlabel("Reconstruction Error")
+plt.ylabel("Number of Samples")
+plt.title("Anomaly Detection Results")
+plt.legend()
+plt.grid(True)
+plt.show()
+
+print("\nPractical Executed Successfully!")
